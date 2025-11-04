@@ -16,12 +16,12 @@ public class CorsConfiguration {
                 registry.addMapping("/api/**")
                         .allowedOrigins(
                                 "https://linktldr.vercel.app",
-                                "https://www.linkedin.com", "chrome-extension://*"
+                                "https://www.linkedin.com", "chrome-extension://fjdoehpkdjihfgpoihgffohodhlapifg"
                         )
                         .allowedMethods("GET", "POST", "PUT", "OPTIONS")
                         .allowedHeaders("*")
                         .exposedHeaders("Authorization")
-                        .allowCredentials(true);
+                        .allowCredentials(false);
             }
         };
     }
