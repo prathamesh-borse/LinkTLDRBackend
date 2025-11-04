@@ -31,14 +31,58 @@ public class AISummaryServiceImpl implements AISummaryService {
     @Override
     public String summarizePost(String postContent) {
         try {
-            // Create JSON body
-            String requestBody = String.format("""
-                    {
-                      "inputs": "%s"
-                    }
-                    """, sanitize(postContent));
+            if (postContent == null || postContent.isBlank()) {
+                return "No content to summarize.";
+            }
 
-            // Build HTTP request
+            // Clean & prepare text
+            String safeText = sanitize(postContent);
+
+            // 🚨 Truncate super-long text if necessary
+            if (safeText.length() > 12000) {
+                safeText = safeText.substring(0, 12000);
+            }
+
+            // If text is very long, break into smaller chunks (~1000 chars each)
+            if (safeText.length() > 3000) {
+                System.out.println("🧩 Splitting input into smaller chunks for summarization...");
+                String[] chunks = safeText.split("(?<=\\G.{1000})");
+                StringBuilder combinedSummary = new StringBuilder();
+
+                for (String chunk : chunks) {
+                    String partial = summarizeChunk(chunk); // custom helper below
+                    combinedSummary.append(partial).append(" ");
+                    // Small delay to avoid API throttling
+                    Thread.sleep(300);
+                }
+
+                // Finally, summarize all mini-summaries together (recursive short summary)
+                return summarizeChunk(combinedSummary.toString());
+            } else {
+                // Small text — summarize directly
+                return summarizeChunk(safeText);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "Unable to summarize this post. Please try again later.";
+        }
+    }
+
+    // Prevents JSON parsing errors due to quotes or newlines
+    private String sanitize(String text) {
+        return text
+                .replaceAll("\\r?\\n+", " ")
+                .replaceAll("\\s+", " ")
+                .replace("\"", "'")
+                .replaceAll("[^\\p{L}\\p{N}\\p{P}\\p{Z}]", "") // remove emojis / weird tokens
+                .trim();
+    }
+
+    private String summarizeChunk(String text) {
+        try {
+            String requestBody = String.format("{\"inputs\": %s}", objectMapper.writeValueAsString(text));
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(MODEL_URL))
                     .header("Authorization", "Bearer " + huggingfaceAPIKey)
@@ -46,32 +90,22 @@ public class AISummaryServiceImpl implements AISummaryService {
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            // Send the request
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            // Check HTTP response
             if (response.statusCode() != 200) {
-                throw new RuntimeException("Hugging Face API error: " + response.statusCode() + " " + response.body());
+                System.err.println("⚠️ HF chunk error: " + response.statusCode() + " " + response.body());
+                return "";
             }
 
-            // Parse JSON response
             JsonNode root = objectMapper.readTree(response.body());
-
-            // Example response format:
-            // [ { "summary_text": "This is the summarized text." } ]
-            if (root.isArray() && root.size() > 0) {
+            if (root.isArray() && root.size() > 0 && root.get(0).has("summary_text")) {
                 return root.get(0).get("summary_text").asText();
-            } else {
-                return "No summary returned from Hugging Face.";
             }
-
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException("Error calling Hugging Face API", e);
+            return "";
+        } catch (Exception e) {
+            System.err.println("❌ summarizeChunk failed: " + e.getMessage());
+            return "";
         }
     }
 
-    // Prevents JSON parsing errors due to quotes or newlines
-    private String sanitize(String text) {
-        return text.replace("\"", "'").replace("\n", " ");
-    }
 }
